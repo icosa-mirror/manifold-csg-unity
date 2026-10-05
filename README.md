@@ -17,8 +17,7 @@ repeatedly, e.g. by a weapon that cuts a hole with every hit. The geometry is co
 - Unity 6 (tested with 6000.5). The demos use URP and the Input System package; without the Input System
   package their scripts are not compiled.
 - macOS (arm64 and x86_64) and Windows x64, Editor and Standalone.
-- Android (ARM64, ARMv7 and x86_64, API 23+) and iOS (ARM64 devices, iOS 13+) require the
-  mobile native libraries built by [GitHub Actions](#mobile-native-libraries).
+- Android (ARM64, ARMv7 and x86_64, API 23+) and iOS (ARM64 devices, iOS 13+).
   iOS Simulator, Linux and WebGL libraries are not provided.
 - Meshes must be closed (every edge shared by exactly two triangles) and have Read/Write enabled.
   Unity's Cube, Sphere, Cylinder and Capsule meshes work, the Plane does not.
@@ -28,13 +27,13 @@ repeatedly, e.g. by a weapon that cuts a hole with every hit. The geometry is co
 Either through the Package Manager: *Window > Package Manager > + > Install package from git URL*, then
 
 ```
-https://github.com/JohannHotzel/manifold-csg-unity.git
+https://github.com/icosa-mirror/manifold-csg-unity.git
 ```
 
 Or clone the repository into the `Assets` folder of your project:
 
 ```bash
-git clone https://github.com/JohannHotzel/manifold-csg-unity.git Assets/ManifoldCSG
+git clone https://github.com/icosa-mirror/manifold-csg-unity.git Assets/ManifoldCSG
 ```
 
 Use git either way. If the repository is downloaded as a ZIP file instead, macOS may block the native
@@ -42,9 +41,12 @@ library with a security warning.
 
 ## Mobile native libraries
 
-The **Build mobile native plugins** GitHub Actions workflow builds Android and iOS libraries from
+Mobile libraries and their Unity importer settings are included under `Plugins/Android/` and
+`Plugins/iOS/`. No separate download is needed when installing this fork.
+
+The **Build mobile native plugins** GitHub Actions workflow rebuilds Android and iOS libraries from
 Manifold v3.5.3. It runs when native build inputs change and can also be run manually from the
-repository's Actions tab. Forks may need to enable Actions first.
+repository's Actions tab. To update the bundled binaries:
 
 1. Run the workflow in your fork and download the `mobile-native-plugins` artifact.
 2. Extract its `Plugins/` folder into this package's root, keeping the `.meta` files. For a package
