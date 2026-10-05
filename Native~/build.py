@@ -37,11 +37,11 @@ def stage(binary, relative, output, target, cpu):
             (output / f"{parent.as_posix()}.meta").write_text(
                 f"fileFormatVersion: 2\nguid: {guid(parent.as_posix())}\n"
                 "folderAsset: yes\nDefaultImporter:\n  externalObjects: {}\n"
-                "  userData: \n  assetBundleName: \n  assetBundleVariant: \n",
+                "  userData:\n  assetBundleName:\n  assetBundleVariant:\n",
                 encoding="utf-8",
             )
         parent = parent.parent
-    extra = "        AddToEmbeddedBinaries: false\n        CompileFlags: \n        FrameworkDependencies: libc++.tbd\n" if target == "iPhone" else ""
+    extra = "        AddToEmbeddedBinaries: false\n        CompileFlags:\n        FrameworkDependencies: libc++.tbd\n" if target == "iPhone" else ""
     Path(f"{destination}.meta").write_text(
         f"fileFormatVersion: 2\nguid: {guid(relative)}\n"
         "PluginImporter:\n  externalObjects: {}\n  serializedVersion: 3\n"
@@ -52,11 +52,12 @@ def stage(binary, relative, output, target, cpu):
         "    Editor:\n      enabled: 0\n      settings:\n"
         "        CPU: AnyCPU\n        DefaultValueInitialized: true\n        OS: AnyOS\n"
         f"    {target}:\n      enabled: 1\n      settings:\n        CPU: {cpu}\n{extra}"
-        "  userData: \n  assetBundleName: \n  assetBundleVariant: \n",
+        "  userData:\n  assetBundleName:\n  assetBundleVariant:\n",
         encoding="utf-8",
     )
-    shutil.copy2(ROOT / "Plugins/THIRD_PARTY_LICENSES.txt", output / "Plugins/THIRD_PARTY_LICENSES.txt")
-    shutil.copy2(ROOT / "Plugins/THIRD_PARTY_LICENSES.txt.meta", output / "Plugins/THIRD_PARTY_LICENSES.txt.meta")
+    if output.resolve() != ROOT:
+        shutil.copy2(ROOT / "Plugins/THIRD_PARTY_LICENSES.txt", output / "Plugins/THIRD_PARTY_LICENSES.txt")
+        shutil.copy2(ROOT / "Plugins/THIRD_PARTY_LICENSES.txt.meta", output / "Plugins/THIRD_PARTY_LICENSES.txt.meta")
 
 
 def verify_symbols(nm, binary, android):
