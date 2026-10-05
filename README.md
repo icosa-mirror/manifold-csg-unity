@@ -113,9 +113,28 @@ then the object is left as it is.
 | `Apply(operation, ...)` | Same as above with a `CsgOperation` value. |
 | `LastError` | Reason for the last failure. |
 | `ResetShape()` | Restores the original mesh, materials, colliders and mass. |
+| `TrimByPlane(Plane)` | Keeps the positive side of a world-space plane. New cut faces use the interior material. |
+| `Simplify(tolerance)` | Simplifies within a tolerance in local mesh units; zero uses the current native tolerance. |
+| `Decompose()` | Returns one independent `CsgBody` per disconnected part and deactivates the source body. A connected body returns itself; failure returns `null`. |
 | `InteriorMaterial` | Can be changed at runtime. |
 | `Operations`, `IsEmpty`, `Volume`, `TriangleCount` | Current state. |
 | `Changed` | Event after every change. |
+
+In Play mode, the CsgBody Inspector also has **Trim By Plane**, **Simplify**, **Separate Disconnected
+Parts** and **Reset Shape** buttons. Assign a Transform as the cutting plane: its position lies on
+the plane and its local +Y axis points towards the side to keep.
+
+Separation creates sibling objects containing the piece's mesh, materials, a CsgBody, a fitted
+MeshCollider when appropriate, and a Rigidbody if the source has one. It preserves the source
+transform and distributes its current mass by piece volume. Other gameplay scripts, joints and
+trigger colliders are not copied. `ResetShape()` on the source removes the spawned pieces and
+restores the authored body. With a Rigidbody only on a parent, pieces remain under that parent.
+
+```csharp
+body.TrimByPlane(new Plane(cuttingPlane.up, cuttingPlane.position));
+body.Simplify(0.01); // local mesh units
+CsgBody[] pieces = body.Decompose();
+```
 
 ## CSG Shape
 

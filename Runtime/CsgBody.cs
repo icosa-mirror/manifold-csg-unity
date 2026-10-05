@@ -77,6 +77,11 @@ namespace ManifoldCSG
         Material[] _appliedMaterials;
         bool _materialsApplied;
 
+        // Plane caps need normals even when the authored normals are kept.
+        readonly Dictionary<uint, Vector3> _planeNormals = new Dictionary<uint, Vector3>();
+        readonly List<CsgBody> _separatedParts = new List<CsgBody>();
+        Mesh _ownedSourceMesh;                           // source mesh created for a separated part
+
         // Colliders: one MeshCollider is kept in step, the other solid colliders are disabled until ResetShape
         bool _collidersTaken;
         MeshCollider _meshCollider;
@@ -286,9 +291,223 @@ namespace ManifoldCSG
             return true;
         }
 
+        /// <summary>
+        /// Keeps the positive side of a world-space plane. New cut faces use InteriorMaterial.
+        /// </summary>
+        public bool TrimByPlane(Plane plane)
+        {
+            Vector3 normal = plane.normal;
+            if (!IsFinite(normal.x) || !IsFinite(normal.y) || !IsFinite(normal.z) ||
+                !IsFinite(plane.distance) || normal.sqrMagnitude < 1e-12f)
+                return Fail("The cutting plane must have a finite, non-zero normal and a finite distance.");
+            Matrix4x4 localToWorld = transform.localToWorldMatrix;
+            if (!ManifoldUnity.IsUsable(localToWorld))
+                return Fail("The body's transform is degenerate: a scale of 0, or numbers that are not finite.");
+
+            // Plane coefficients transform with the transpose, including the translation.
+            Vector4 local = localToWorld.transpose * new Vector4(normal.x, normal.y, normal.z, plane.distance);
+            Vector3 localNormal = new Vector3(local.x, local.y, local.z);
+            float length = localNormal.magnitude;
+            if (!IsFinite(length) || length < 1e-12f || !IsFinite(local.w))
+                return Fail("The cutting plane cannot be represented in the body's local space.");
+            localNormal /= length;
+            double offset = -(double)local.w / length;
+            return ApplyGeometry("Plane trim", current =>
+                current.TrimByPlane(localNormal.x, localNormal.y, localNormal.z, offset), -localNormal);
+        }
+
+        /// <summary>Simplifies the current geometry within a tolerance in local mesh units.</summary>
+        public bool Simplify(double tolerance = 0)
+        {
+            if (!IsFinite(tolerance) || tolerance < 0)
+                return Fail("Simplification tolerance must be finite and non-negative.");
+            return ApplyGeometry("Simplification", current => current.Simplify(tolerance), null);
+        }
+
+        static bool IsFinite(double value)
+        {
+            return !double.IsNaN(value) && !double.IsInfinity(value);
+        }
+
+        bool ApplyGeometry(string operation, Func<Manifold, Manifold> create, Vector3? capNormal)
+        {
+            if (!EnsureBody()) return false;
+            Manifold next = null;
+            MeshData data = null;
+            using (ApplyMarker.Auto())
+            {
+                try
+                {
+                    next = create(_body);
+                    ManifoldError status = next.Evaluate();
+                    if (status != ManifoldError.NoError) throw new InvalidOperationException(Manifold.Describe(status));
+                    if (normals == NormalMode.Recalculate)
+                    {
+                        Manifold withNormals = next.CalculateNormals(sharpAngle);
+                        next.Dispose();
+                        next = withNormals;
+                        status = next.Evaluate();
+                        if (status != ManifoldError.NoError) throw new InvalidOperationException(Manifold.Describe(status));
+                    }
+                    if (capNormal.HasValue) data = next.GetMeshData();
+                }
+                catch (Exception e)
+                {
+                    if (next != null) next.Dispose();
+                    return Fail($"{operation} failed, the body is unchanged ({e.Message})");
+                }
+            }
+            if (data != null)
+            {
+                for (int run = 0; run < data.NumRun; run++)
+                {
+                    uint id = data.RunOriginalId[run];
+                    if (_slotOfId.ContainsKey(id)) continue;
+                    MapId(id, ToolEntry.Interior);
+                    _planeNormals[id] = capNormal.Value;
+                }
+            }
+            _body.Dispose();
+            _body = next;
+            _operations++;
+            _lastError = null;
+            Commit();
+            return true;
+        }
+
+        /// <summary>
+        /// Creates one independent CsgBody per disconnected part and deactivates this body.
+        /// A connected body returns itself. ResetShape removes the spawned parts and restores this body.
+        /// New objects contain mesh, renderer, collider and optional Rigidbody components; other scripts are not copied.
+        /// Returns null on failure.
+        /// </summary>
+        public CsgBody[] Decompose()
+        {
+            if (!EnsureBody()) return null;
+            if (_separatedParts.Count > 0)
+            {
+                Fail("This body has already been separated. ResetShape before separating it again.");
+                return null;
+            }
+            Manifold[] parts = null;
+            Mesh[] meshes = null;
+            double[] volumes = null;
+            List<CsgBody> created = new List<CsgBody>();
+            try
+            {
+                parts = _body.Decompose();
+                if (parts.Length <= 1)
+                {
+                    _lastError = null;
+                    return parts.Length == 0 ? new CsgBody[0] : new[] { this };
+                }
+                meshes = new Mesh[parts.Length];
+                volumes = new double[parts.Length];
+                for (int i = 0; i < parts.Length; i++)
+                {
+                    MeshData data = parts[i].GetMeshData(null, 0);
+                    ApplyPlaneNormals(data);
+                    meshes[i] = ManifoldUnity.ToUnityMesh(data, _slotOfId, _slots.Count);
+                    meshes[i].name = $"{name} (part {i + 1})";
+                    volumes[i] = parts[i].Volume;
+                }
+                Material[] materials = new Material[_slots.Count];
+                for (int i = 0; i < materials.Length; i++) materials[i] = MaterialOf(_slots[i]);
+                Rigidbody sourceBody = GetComponent<Rigidbody>();
+                double totalVolume = _body.Volume;
+                for (int i = 0; i < parts.Length; i++)
+                {
+                    GameObject piece = new GameObject($"{name} (part {i + 1})");
+                    piece.SetActive(false);
+                    CsgBody fragment = piece.AddComponent<CsgBody>();
+                    created.Add(fragment);
+                    fragment._ownedSourceMesh = meshes[i];
+                    piece.GetComponent<MeshFilter>().sharedMesh = meshes[i];
+                    meshes[i] = null; // ownership transferred to the fragment
+                    piece.layer = gameObject.layer;
+                    piece.tag = gameObject.tag;
+                    piece.transform.SetParent(transform.parent, false);
+                    piece.transform.localPosition = transform.localPosition;
+                    piece.transform.localRotation = transform.localRotation;
+                    piece.transform.localScale = transform.localScale;
+                    MeshRenderer renderer = piece.AddComponent<MeshRenderer>();
+                    renderer.sharedMaterials = materials;
+                    if (_renderer != null)
+                    {
+                        renderer.shadowCastingMode = _renderer.shadowCastingMode;
+                        renderer.receiveShadows = _renderer.receiveShadows;
+                    }
+                    fragment.normals = normals;
+                    fragment.sharpAngle = sharpAngle;
+                    fragment.interiorMaterial = interiorMaterial;
+                    fragment.colliders = colliders;
+                    fragment.scaleMassWithVolume = scaleMassWithVolume;
+                    fragment.whenEmpty = whenEmpty;
+                    if (sourceBody != null)
+                    {
+                        Rigidbody rigidbody = piece.AddComponent<Rigidbody>();
+                        rigidbody.isKinematic = sourceBody.isKinematic;
+                        rigidbody.useGravity = sourceBody.useGravity;
+                        rigidbody.constraints = sourceBody.constraints;
+                        rigidbody.interpolation = sourceBody.interpolation;
+                        rigidbody.collisionDetectionMode = sourceBody.collisionDetectionMode;
+                        rigidbody.linearDamping = sourceBody.linearDamping;
+                        rigidbody.angularDamping = sourceBody.angularDamping;
+                        rigidbody.mass = Mathf.Max(1e-7f, sourceBody.mass * (float)(volumes[i] / totalVolume));
+                        if (!sourceBody.isKinematic)
+                        {
+                            Vector3 center = piece.transform.TransformPoint(piece.GetComponent<MeshFilter>().sharedMesh.bounds.center);
+                            rigidbody.linearVelocity = sourceBody.GetPointVelocity(center);
+                            rigidbody.angularVelocity = sourceBody.angularVelocity;
+                        }
+                    }
+                    ColliderMode mode = ResolveColliderMode(false);
+                    if (mode != ColliderMode.Keep || HasSolidCollider())
+                    {
+                        MeshCollider collider = piece.AddComponent<MeshCollider>();
+                        collider.sharedMesh = piece.GetComponent<MeshFilter>().sharedMesh;
+                        collider.convex = sourceBody != null && !sourceBody.isKinematic || mode == ColliderMode.Convex;
+                    }
+                    if (!fragment.EnsureBody()) throw new InvalidOperationException(fragment.LastError);
+                    fragment.UpdateMesh();
+                    fragment.UpdateCollider();
+                }
+            }
+            catch (Exception e)
+            {
+                foreach (CsgBody part in created) DestroyPart(part);
+                if (meshes != null) foreach (Mesh mesh in meshes) DestroyMesh(mesh);
+                Fail($"Separation failed, the body is unchanged ({e.Message})");
+                return null;
+            }
+            finally
+            {
+                if (parts != null) foreach (Manifold part in parts) part.Dispose();
+            }
+            _separatedParts.AddRange(created);
+            _operations++;
+            _lastError = null;
+            _deactivated = true;
+            gameObject.SetActive(false);
+            foreach (CsgBody part in created) part.gameObject.SetActive(true);
+            if (Changed != null) Changed(this);
+            return created.ToArray();
+        }
+
+        static void DestroyPart(CsgBody part)
+        {
+            if (part == null) return;
+            part.gameObject.SetActive(false);
+            part.ReleaseGeometry();
+            if (Application.isPlaying) Destroy(part.gameObject);
+            else DestroyImmediate(part.gameObject);
+        }
+
         /// <summary>Back to the authored object: mesh, materials, colliders and mass.</summary>
         public void ResetShape()
         {
+            foreach (CsgBody part in _separatedParts) DestroyPart(part);
+            _separatedParts.Clear();
             if (!_initialized) return;   // nothing has changed yet
             if (_original != null)
             {
@@ -408,6 +627,7 @@ namespace ManifoldCSG
             {
                 // normalIdx 0: imported normals are turned along with their part, just like calculated ones
                 _body.GetMeshData(_meshData, 0);
+                ApplyPlaneNormals(_meshData);
                 if (_mesh == null)
                 {
                     _mesh = new Mesh();
@@ -416,6 +636,23 @@ namespace ManifoldCSG
                 ManifoldUnity.ToUnityMesh(_meshData, _slotOfId, _slots.Count, _mesh);
                 _filter.sharedMesh = _mesh;
                 ApplyMaterials();
+            }
+        }
+
+        void ApplyPlaneNormals(MeshData data)
+        {
+            if (normals != NormalMode.KeepImported || data.NumProp < 6) return;
+            for (int run = 0; run < data.NumRun; run++)
+            {
+                Vector3 normal;
+                if (!_planeNormals.TryGetValue(data.RunOriginalId[run], out normal)) continue;
+                for (uint index = data.RunIndex[run]; index < data.RunIndex[run + 1]; index++)
+                {
+                    int vertex = checked((int)data.Tris[index] * data.NumProp + 3);
+                    data.VertProps[vertex] = normal.x;
+                    data.VertProps[vertex + 1] = normal.y;
+                    data.VertProps[vertex + 2] = normal.z;
+                }
             }
         }
 
@@ -645,12 +882,21 @@ namespace ManifoldCSG
 
         void OnDestroy()
         {
+            ReleaseGeometry();
+        }
+
+        void ReleaseGeometry()
+        {
             if (_body != null) _body.Dispose();
             if (_original != null) _original.Dispose();
             _body = null;
             _original = null;
             DestroyMesh(_mesh);
             DestroyMesh(_hullMesh);
+            DestroyMesh(_ownedSourceMesh);
+            _mesh = null;
+            _hullMesh = null;
+            _ownedSourceMesh = null;
         }
 
         static void DestroyMesh(Mesh mesh)

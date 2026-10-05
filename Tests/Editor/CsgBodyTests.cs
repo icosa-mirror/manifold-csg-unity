@@ -8,6 +8,91 @@ namespace ManifoldCSG.Tests
     public class CsgBodyTests : CsgTestBase
     {
         [Test]
+        public void TrimByPlane_UsesWorldSpaceAndKeepsCutMaterialAndNormals()
+        {
+            CsgBody body = Body();
+            body.transform.rotation = Quaternion.Euler(20, 35, 15);
+            body.transform.localScale = new Vector3(-2, 3, 4);
+            body.normals = NormalMode.KeepImported;
+            body.InteriorMaterial = NewMaterial("Plane Interior");
+            Mesh original = MeshOf(body);
+            Vector3 worldNormal = body.transform.TransformDirection(Vector3.right);
+            Plane plane = new Plane(worldNormal, body.transform.position);
+
+            Assert.IsTrue(body.TrimByPlane(plane), body.LastError);
+
+            Assert.AreEqual(0.5f, body.Volume, 1e-4);
+            Assert.AreEqual(body.InteriorMaterial, body.GetComponent<MeshRenderer>().sharedMaterials[1]);
+            Assert.Greater(Triangles(MeshOf(body), 1), 0);
+            foreach (Vector3 vertex in MeshOf(body).vertices)
+                Assert.GreaterOrEqual(plane.GetDistanceToPoint(body.transform.TransformPoint(vertex)), -1e-4f);
+            foreach (int index in MeshOf(body).GetTriangles(1))
+                Assert.Greater(MeshOf(body).normals[index].sqrMagnitude, 0.99f);
+            body.ResetShape();
+            Assert.AreSame(original, MeshOf(body));
+            Assert.AreEqual(1f, body.Volume, 1e-4);
+        }
+
+        [Test]
+        public void Simplify_ReducesSphereGeometryWithinTolerance()
+        {
+            GameObject sphere = Primitive(PrimitiveType.Sphere, Vector3.zero);
+            CsgBody body = sphere.AddComponent<CsgBody>();
+            int before = body.TriangleCount;
+            Mesh original = MeshOf(body);
+            int changed = 0;
+            body.Changed += value => changed++;
+
+            Assert.IsTrue(body.Simplify(0.02), body.LastError);
+
+            Assert.Less(body.TriangleCount, before);
+            Assert.AreEqual(1, changed);
+            Assert.AreEqual(1, body.Operations);
+            Assert.AreSame(MeshOf(body), sphere.GetComponent<MeshCollider>().sharedMesh);
+            body.ResetShape();
+            Assert.AreSame(original, MeshOf(body));
+        }
+
+        [Test]
+        public void Decompose_PreservesVolumeAndMassAndResetRemovesFragments()
+        {
+            CsgBody body = Body();
+            Rigidbody rigidbody = body.gameObject.AddComponent<Rigidbody>();
+            rigidbody.isKinematic = true;
+            rigidbody.mass = 5;
+            CsgShape box = Shape(CsgShape.Primitive.Box);
+            Assert.IsTrue(body.Union(box, At(new Vector3(2, 0, 0), 0.5f)), body.LastError);
+            float volume = body.Volume;
+            float mass = rigidbody.mass;
+            Mesh before = MeshOf(body);
+            Material[] materials = body.GetComponent<MeshRenderer>().sharedMaterials;
+
+            CsgBody[] parts = body.Decompose();
+
+            Assert.IsNotNull(parts, body.LastError);
+            Assert.AreEqual(2, parts.Length);
+            Assert.IsFalse(body.gameObject.activeSelf);
+            float totalVolume = 0;
+            float totalMass = 0;
+            foreach (CsgBody part in parts)
+            {
+                DestroyLater(part.gameObject);
+                Assert.IsTrue(part.gameObject.activeSelf);
+                Assert.AreNotSame(before, MeshOf(part));
+                CollectionAssert.AreEqual(materials, part.GetComponent<MeshRenderer>().sharedMaterials);
+                Assert.AreSame(MeshOf(part), part.GetComponent<MeshCollider>().sharedMesh);
+                totalVolume += part.Volume;
+                totalMass += part.GetComponent<Rigidbody>().mass;
+            }
+            Assert.AreEqual(volume, totalVolume, 1e-4);
+            Assert.AreEqual(mass, totalMass, 1e-4);
+            body.ResetShape();
+            Assert.IsTrue(body.gameObject.activeSelf);
+            Assert.AreEqual(1f, body.Volume, 1e-4);
+            foreach (CsgBody part in parts) Assert.IsTrue(part == null);
+        }
+
+        [Test]
         public void Subtract_RemovesExactlyTheToolVolume()
         {
             CsgBody body = Body();

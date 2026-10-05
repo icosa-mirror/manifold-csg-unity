@@ -9,6 +9,9 @@ namespace ManifoldCSG
     [CustomEditor(typeof(CsgBody)), CanEditMultipleObjects]
     class CsgBodyEditor : Editor
     {
+        Transform _cutPlane;
+        float _simplifyTolerance;
+
         public override void OnInspectorGUI()
         {
             DrawDefaultInspector();
@@ -28,12 +31,37 @@ namespace ManifoldCSG
             if (body.LastError != null) EditorGUILayout.HelpBox(body.LastError, MessageType.Error);
 
             Colliders(body);
+            Operations(body);
 
             bool rigidbodyOnParent = body.GetComponent<Rigidbody>() == null && body.GetComponentInParent<Rigidbody>() != null;
             if (body.scaleMassWithVolume && rigidbodyOnParent)
             {
                 EditorGUILayout.HelpBox("Scale Mass With Volume only works with a Rigidbody on this object, not on a parent.",
                                         MessageType.Info);
+            }
+        }
+
+        void Operations(CsgBody body)
+        {
+            EditorGUILayout.Space();
+            EditorGUILayout.LabelField("Geometry Operations", EditorStyles.boldLabel);
+            if (!Application.isPlaying)
+                EditorGUILayout.HelpBox("Enter Play mode to apply operations. The cutting plane keeps the side pointed to by its local +Y axis.", MessageType.Info);
+            using (new EditorGUI.DisabledScope(!Application.isPlaying || !body.gameObject.activeInHierarchy))
+            {
+                _cutPlane = (Transform)EditorGUILayout.ObjectField("Cutting Plane", _cutPlane, typeof(Transform), true);
+                using (new EditorGUI.DisabledScope(_cutPlane == null))
+                {
+                    if (GUILayout.Button("Trim By Plane"))
+                        body.TrimByPlane(new Plane(_cutPlane.up, _cutPlane.position));
+                }
+                _simplifyTolerance = EditorGUILayout.FloatField(new GUIContent("Simplify Tolerance", "Maximum geometric deviation in local mesh units. Zero uses Manifold's current tolerance."), _simplifyTolerance);
+                if (GUILayout.Button("Simplify")) body.Simplify(_simplifyTolerance);
+                if (GUILayout.Button("Separate Disconnected Parts")) body.Decompose();
+            }
+            using (new EditorGUI.DisabledScope(!Application.isPlaying || body.Operations == 0))
+            {
+                if (GUILayout.Button("Reset Shape")) body.ResetShape();
             }
         }
 
