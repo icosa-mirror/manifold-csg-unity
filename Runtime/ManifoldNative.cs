@@ -44,7 +44,11 @@ namespace ManifoldCSG.Native
     // Internal: raw handles can crash Unity when misused, so only the wrappers in this assembly call them
     internal static class ManifoldNative
     {
+#if UNITY_IOS && !UNITY_EDITOR
+        const string Lib = "__Internal";
+#else
         const string Lib = "manifoldc";
+#endif
 
         // --- Memory -----------------------------------------------------------
         [DllImport(Lib)] public static extern IntPtr manifold_alloc_manifold();

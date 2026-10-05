@@ -16,7 +16,10 @@ repeatedly, e.g. by a weapon that cuts a hole with every hit. The geometry is co
 
 - Unity 6 (tested with 6000.5). The demos use URP and the Input System package; without the Input System
   package their scripts are not compiled.
-- macOS (arm64 and x86_64) and Windows x64, Editor and Standalone. No Linux, mobile or WebGL library.
+- macOS (arm64 and x86_64) and Windows x64, Editor and Standalone.
+- Android (ARM64, ARMv7 and x86_64, API 23+) and iOS (ARM64 devices, iOS 13+) require the
+  mobile native libraries built by [GitHub Actions](#mobile-native-libraries).
+  iOS Simulator, Linux and WebGL libraries are not provided.
 - Meshes must be closed (every edge shared by exactly two triangles) and have Read/Write enabled.
   Unity's Cube, Sphere, Cylinder and Capsule meshes work, the Plane does not.
 
@@ -36,6 +39,27 @@ git clone https://github.com/JohannHotzel/manifold-csg-unity.git Assets/Manifold
 
 Use git either way. If the repository is downloaded as a ZIP file instead, macOS may block the native
 library with a security warning.
+
+## Mobile native libraries
+
+The **Build mobile native plugins** GitHub Actions workflow builds Android and iOS libraries from
+Manifold v3.5.3. It runs when native build inputs change and can also be run manually from the
+repository's Actions tab. Forks may need to enable Actions first.
+
+1. Run the workflow in your fork and download the `mobile-native-plugins` artifact.
+2. Extract its `Plugins/` folder into this package's root, keeping the `.meta` files. For a package
+   installed through a Git URL, add the files to your fork and commit them, then update the package
+   revision in Unity; Package Manager's cached copies are read-only.
+3. Select the matching target architecture in Unity's Player Settings. Android has ARM64, ARMv7 and
+   x86_64 libraries; iOS has a device-only ARM64 static archive.
+
+The Android library includes Manifold, Clipper2 and the C++ runtime and supports 16 KB memory pages.
+The iOS archive includes Manifold and Clipper2, links with Apple's C++ runtime, and uses
+`DllImport("__Internal")` in device players. Desktop Editors continue to use their existing library.
+The workflow checks that every C API entry point used by the C# bindings is present. Device runtime
+testing is still required; these checks do not run Unity players.
+
+For local rebuild commands and prerequisites, see [Native~/README.md](Native~/README.md).
 
 ## Usage
 
@@ -201,6 +225,7 @@ The shooter GIF is from a separate project and not included.
 | `Demo/` | Sample scenes, scripts, materials, shapes |
 | `Tests/` | EditMode tests |
 | `Documentation~/` | Images for this README (not imported by Unity) |
+| `Native~/` | Pinned CMake build and staging script for Android and iOS (not imported by Unity) |
 | `package.json` | Package manifest for the Package Manager |
 
 ## License
